@@ -12,69 +12,17 @@ export interface StudentData {
     afterSchool: string;
     relationshipStatus: string;
     photoPath?: string;
-    photoBase64?: string;
-    photoUrl?: string;
-    [key: string]: any;
+    [key: string]: any; // Allow additional custom fields
   }
   
-  export type TemplateType = 'canvas' | 'html' | 'svg';
-  
-  export interface BaseTemplateConfig {
+  export interface TemplateConfig {
     name: string;
-    type: TemplateType;
     width: number;
     height: number;
-    description?: string;
-  }
-  
-  export interface CanvasTemplateConfig extends BaseTemplateConfig {
-    type: 'canvas';
     backgroundColor: string;
     fields: TemplateField[];
     photoConfig: PhotoConfig;
     decorativeElements?: DecorativeElement[];
-  }
-  
-  export interface HtmlTemplateConfig extends BaseTemplateConfig {
-    type: 'html';
-    templatePath: string;
-    stylePath?: string;
-    customCSS?: string;
-    puppeteerOptions?: PuppeteerOptions;
-  }
-  
-  export interface SvgTemplateConfig extends BaseTemplateConfig {
-    type: 'svg';
-    templatePath: string;
-    placeholders: SvgPlaceholder[];
-  }
-  
-  export type TemplateConfig = CanvasTemplateConfig | HtmlTemplateConfig | SvgTemplateConfig;
-  
-  export interface PuppeteerOptions {
-    viewport?: {
-      width: number;
-      height: number;
-      deviceScaleFactor?: number;
-    };
-    format?: 'png' | 'jpeg' | 'webp';
-    quality?: number;
-    fullPage?: boolean;
-    clip?: {
-      x: number;
-      y: number;
-      width: number;
-      height: number;
-    };
-    waitForSelector?: string;
-    delay?: number;
-  }
-  
-  export interface SvgPlaceholder {
-    id: string;
-    type: 'text' | 'image' | 'attr';
-    field: string;
-    attribute?: string;
   }
   
   export interface TemplateField {
@@ -117,7 +65,7 @@ export interface StudentData {
   }
   
   export interface ColumnMapping {
-    [templateKey: string]: string;
+    [templateKey: string]: string; // Maps template field keys to CSV column names
   }
   
   export interface GenerationConfig {
@@ -127,5 +75,5 @@ export interface StudentData {
     columnMapping?: ColumnMapping;
     photoColumnName?: string;
     nameColumnName?: string;
-    outputFormat?: 'png' | 'jpeg' | 'webp' | 'svg';
   }
+  

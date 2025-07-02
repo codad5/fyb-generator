@@ -38,12 +38,14 @@ export class CSVParser {
     };
 
     if (columnMapping) {
+      // Use custom column mapping
       for (const [templateKey, csvColumn] of Object.entries(columnMapping)) {
         if (row[csvColumn] !== undefined) {
           studentData[templateKey] = row[csvColumn];
         }
       }
     } else {
+      // Use default column names (exact match)
       Object.keys(studentData).forEach(key => {
         if (row[key] !== undefined) {
           studentData[key] = row[key];
@@ -51,6 +53,7 @@ export class CSVParser {
       });
     }
 
+    // Add any additional columns that weren't mapped
     Object.keys(row).forEach(key => {
       if (!studentData.hasOwnProperty(key)) {
         studentData[key] = row[key];

@@ -1,6 +1,6 @@
+// src/core/image-utils.ts
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import fetch from 'node-fetch';
 import sharp from 'sharp';
 
 export class ImageUtils {
@@ -33,6 +33,9 @@ export class ImageUtils {
 
   private static async fetchImageAsBase64(url: string): Promise<string | null> {
     try {
+      // Use dynamic import for node-fetch since it's ESM
+      const fetch = (await import('node-fetch')).default;
+      
       const response = await fetch(url);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       
@@ -56,6 +59,8 @@ export class ImageUtils {
         case '.png': mimeType = 'image/png'; break;
         case '.gif': mimeType = 'image/gif'; break;
         case '.webp': mimeType = 'image/webp'; break;
+        case '.jpg':
+        case '.jpeg': mimeType = 'image/jpeg'; break;
       }
       
       return `data:${mimeType};base64,${buffer.toString('base64')}`;

@@ -1,13 +1,13 @@
 import { createCanvas, loadImage, Canvas, CanvasRenderingContext2D } from 'canvas';
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import { StudentData, TemplateConfig, TemplateField, DecorativeElement } from '../types';
+import { StudentData, TemplateConfig, TemplateField, DecorativeElement, CanvasTemplateConfig } from '../types';
 
 export class ImageGenerator {
   private canvas: Canvas;
   private ctx: CanvasRenderingContext2D;
 
-  constructor(private template: TemplateConfig) {
+  constructor(private template: CanvasTemplateConfig) {
     this.canvas = createCanvas(template.width, template.height);
     this.ctx = this.canvas.getContext('2d');
   }

@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-
 import { Command } from 'commander';
 import * as path from 'path';
 import * as fs from 'fs-extra';
 import { FYBGenerator } from './core/generator';
 import { getTemplateNames, getTemplatesByType } from './templates';
 import { ColumnMapping } from './types';
+import * as dotenv from 'dotenv';
+dotenv.config();
 
 const program = new Command();
 

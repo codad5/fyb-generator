@@ -1,0 +1,35 @@
+# basic node.js 
+
+.env
+.env.prod
+node_modules/
+dist/
+logs/
+*.log
+test-rad.sh
+private-key.pem
+public-key.pem
+private.pem
+public.pem
+prometheus-data/
+*.pem
+test.js
+test*.js
+
+
+node_modules
+.next
+out
+*.log
+.env*
+
+
+# reports
+reports/
+
+# test coverage 
+coverage/
+
+storage/
+
+dist/

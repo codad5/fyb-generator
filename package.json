@@ -1,0 +1,44 @@
+{
+  "name": "fyb-generator",
+  "version": "1.0.0",
+  "description": "Final Year Brethren image generator with Canvas, HTML, and SVG support",
+  "main": "dist/index.js",
+  "bin": {
+    "fyb": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "cli": "ts-node src/cli.ts",
+    "web": "ts-node src/web-server.ts",
+    "start": "node dist/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "canvas": "^3.1.2",
+    "commander": "^14.0.0",
+    "csv-parser": "^3.2.0",
+    "dotenv": "^17.0.1",
+    "express": "^5.1.0",
+    "fs-extra": "^11.3.0",
+    "handlebars": "^4.7.8",
+    "jsdom": "^26.1.0",
+    "multer": "^2.0.1",
+    "node-fetch": "^3.3.2",
+    "path": "^0.12.7",
+    "puppeteer": "^24.11.2",
+    "sharp": "^0.34.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/fs-extra": "^11.0.4",
+    "@types/jsdom": "^21.1.7",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^24.0.10",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
+  }
+}

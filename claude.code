@@ -1,0 +1,2315 @@
+// src/core/image-utils.ts
+import * as fs from 'fs-extra';
+import * as path from 'path';
+import fetch from 'node-fetch';
+import sharp from 'sharp';
+
+export class ImageUtils {
+  static async processImageInput(input: string | undefined): Promise<string | null> {
+    if (!input) return null;
+
+    try {
+      // Check if it's a base64 string
+      if (input.startsWith('data:image/')) {
+        return input;
+      }
+
+      // Check if it's a URL
+      if (input.startsWith('http://') || input.startsWith('https://')) {
+        return await this.fetchImageAsBase64(input);
+      }
+
+      // Check if it's a local file path
+      if (await fs.pathExists(input)) {
+        return await this.fileToBase64(input);
+      }
+
+      console.warn(`Image not found or invalid: ${input}`);
+      return null;
+    } catch (error) {
+      console.error(`Error processing image: ${input}`, error);
+      return null;
+    }
+  }
+
+  private static async fetchImageAsBase64(url: string): Promise<string | null> {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      
+      const buffer = await response.buffer();
+      const contentType = response.headers.get('content-type') || 'image/jpeg';
+      
+      return `data:${contentType};base64,${buffer.toString('base64')}`;
+    } catch (error) {
+      console.error(`Failed to fetch image from URL: ${url}`, error);
+      return null;
+    }
+  }
+
+  private static async fileToBase64(filePath: string): Promise<string | null> {
+    try {
+      const buffer = await fs.readFile(filePath);
+      const ext = path.extname(filePath).toLowerCase();
+      
+      let mimeType = 'image/jpeg';
+      switch (ext) {
+        case '.png': mimeType = 'image/png'; break;
+        case '.gif': mimeType = 'image/gif'; break;
+        case '.webp': mimeType = 'image/webp'; break;
+      }
+      
+      return `data:${mimeType};base64,${buffer.toString('base64')}`;
+    } catch (error) {
+      console.error(`Failed to read image file: ${filePath}`, error);
+      return null;
+    }
+  }
+
+  static async optimizeImage(
+    input: Buffer | string, 
+    options: {
+      width?: number;
+      height?: number;
+      quality?: number;
+      format?: 'png' | 'jpeg' | 'webp';
+    } = {}
+  ): Promise<Buffer> {
+    let processor = sharp(input);
+
+    if (options.width || options.height) {
+      processor = processor.resize(options.width, options.height, {
+        fit: 'inside',
+        withoutEnlargement: true
+      });
+    }
+
+    switch (options.format) {
+      case 'png':
+        processor = processor.png({ quality: options.quality || 90 });
+        break;
+      case 'webp':
+        processor = processor.webp({ quality: options.quality || 85 });
+        break;
+      default:
+        processor = processor.jpeg({ quality: options.quality || 85 });
+    }
+
+    return processor.toBuffer();
+  }
+}
+
+// src/core/html-generator.ts
+import puppeteer, { Browser, Page } from 'puppeteer';
+import * as fs from 'fs-extra';
+import * as path from 'path';
+import * as Handlebars from 'handlebars';
+import { StudentData, HtmlTemplateConfig } from '../types';
+import { ImageUtils } from './image-utils';
+
+export class HtmlGenerator {
+  private browser: Browser | null = null;
+
+  async init(): Promise<void> {
+    if (!this.browser) {
+      this.browser = await puppeteer.launch({
+        headless: 'new',
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+      });
+    }
+  }
+
+  async destroy(): Promise<void> {
+    if (this.browser) {
+      await this.browser.close();
+      this.browser = null;
+    }
+  }
+
+  async generateImage(
+    studentData: StudentData,
+    template: HtmlTemplateConfig,
+    outputPath: string
+  ): Promise<void> {
+    await this.init();
+    
+    const page = await this.browser!.newPage();
+    
+    try {
+      // Set viewport
+      if (template.puppeteerOptions?.viewport) {
+        await page.setViewport(template.puppeteerOptions.viewport);
+      }
+
+      // Process student data for template
+      const processedData = await this.processStudentDataForHtml(studentData);
+
+      // Load and compile template
+      const html = await this.compileTemplate(template, processedData);
+
+      // Set content and wait for rendering
+      await page.setContent(html, { waitUntil: 'networkidle0' });
+
+      // Wait for any additional delay
+      if (template.puppeteerOptions?.delay) {
+        await page.waitForTimeout(template.puppeteerOptions.delay);
+      }
+
+      // Wait for specific selector if specified
+      if (template.puppeteerOptions?.waitForSelector) {
+        await page.waitForSelector(template.puppeteerOptions.waitForSelector);
+      }
+
+      // Take screenshot
+      const screenshotOptions: any = {
+        path: outputPath,
+        type: template.puppeteerOptions?.format || 'png'
+      };
+
+      if (template.puppeteerOptions?.quality && screenshotOptions.type === 'jpeg') {
+        screenshotOptions.quality = template.puppeteerOptions.quality;
+      }
+
+      if (template.puppeteerOptions?.clip) {
+        screenshotOptions.clip = template.puppeteerOptions.clip;
+      } else if (template.puppeteerOptions?.fullPage) {
+        screenshotOptions.fullPage = true;
+      }
+
+      await page.screenshot(screenshotOptions);
+
+    } finally {
+      await page.close();
+    }
+  }
+
+  private async processStudentDataForHtml(studentData: StudentData): Promise<StudentData> {
+    const processed = { ...studentData };
+
+    // Process photo - convert to base64 if needed
+    const photoInput = studentData.photoPath || studentData.photoUrl || studentData.photoBase64;
+    if (photoInput) {
+      const processedPhoto = await ImageUtils.processImageInput(photoInput);
+      if (processedPhoto) {
+        if (processedPhoto.startsWith('data:')) {
+          processed.photoBase64 = processedPhoto.split(',')[1];
+        } else {
+          processed.photoUrl = processedPhoto;
+        }
+      }
+    }
+
+    return processed;
+  }
+
+  private async compileTemplate(template: HtmlTemplateConfig, data: StudentData): Promise<string> {
+    // Try to load template from various locations
+    const possiblePaths = [
+      template.templatePath,
+      path.resolve(template.templatePath),
+      path.join(process.cwd(), template.templatePath),
+      path.join(process.cwd(), 'src', template.templatePath),
+      path.join(__dirname, '..', template.templatePath)
+    ];
+
+    let templateContent = '';
+    
+    for (const templatePath of possiblePaths) {
+      try {
+        if (await fs.pathExists(templatePath)) {
+          templateContent = await fs.readFile(templatePath, 'utf8');
+          break;
+        }
+      } catch (error) {
+        // Continue to next path
+      }
+    }
+
+    if (!templateContent) {
+      // Fallback to embedded template based on template name
+      templateContent = this.getEmbeddedTemplate(template.name);
+    }
+
+    // Compile with Handlebars
+    const compiledTemplate = Handlebars.compile(templateContent);
+    return compiledTemplate(data);
+  }
+
+  private getEmbeddedTemplate(templateName: string): string {
+    // Return embedded templates based on name
+    switch (templateName) {
+      case 'glamour':
+        return this.getGlamourTemplate();
+      case 'minimal':
+        return this.getMinimalTemplate();
+      default:
+        return this.getGlamourTemplate(); // Default fallback
+    }
+  }
+
+  private getGlamourTemplate(): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{name}} - FYB</title>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            width: 800px; height: 1000px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Inter', sans-serif; color: white;
+            position: relative; overflow: hidden;
+        }
+        .glamour-card {
+            position: relative; width: 100%; height: 100%;
+            padding: 60px 50px;
+            background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%);
+            backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.2);
+        }
+        .header { text-align: center; margin-bottom: 40px; position: relative; z-index: 10; }
+        .name {
+            font-family: 'Playfair Display', serif; font-size: 42px; font-weight: 700;
+            margin-bottom: 10px; background: linear-gradient(45deg, #fff, #f0f0f0);
+            -webkit-// package.json
+{
+  "name": "fyb-generator",
+  "version": "2.0.0",
+  "description": "Final Year Brethren image generator from CSV data with Canvas, HTML, and SVG support",
+  "main": "dist/index.js",
+  "bin": {
+    "fyb": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "cli": "ts-node src/cli.ts",
+    "web": "ts-node src/web-server.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "canvas": "^2.11.2",
+    "csv-parser": "^3.0.0",
+    "express": "^4.18.2",
+    "multer": "^1.4.5-lts.1",
+    "commander": "^11.1.0",
+    "fs-extra": "^11.1.1",
+    "path": "^0.12.7",
+    "puppeteer": "^21.5.2",
+    "handlebars": "^4.7.8",
+    "sharp": "^0.32.6",
+    "jsdom": "^23.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.8.0",
+    "@types/express": "^4.17.21",
+    "@types/multer": "^1.4.11",
+    "@types/jsdom": "^21.1.6",
+    "typescript": "^5.2.2",
+    "ts-node": "^10.9.1"
+  }
+}
+
+// tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "sourceMap": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
+
+// src/types/index.ts
+export interface StudentData {
+  name: string;
+  nickname?: string;
+  department: string;
+  stateOfOrigin: string;
+  mostChallengingCourse: string;
+  favoriteCourse: string;
+  bestLevel: string;
+  hobbies: string;
+  bestMoment: string;
+  worstExperience: string;
+  afterSchool: string;
+  relationshipStatus: string;
+  photoPath?: string;
+  photoBase64?: string; // New: Support for base64 images
+  photoUrl?: string;    // New: Support for image URLs
+  [key: string]: any; // Allow additional custom fields
+}
+
+export type TemplateType = 'canvas' | 'html' | 'svg';
+
+export interface BaseTemplateConfig {
+  name: string;
+  type: TemplateType;
+  width: number;
+  height: number;
+  description?: string;
+}
+
+export interface CanvasTemplateConfig extends BaseTemplateConfig {
+  type: 'canvas';
+  backgroundColor: string;
+  fields: TemplateField[];
+  photoConfig: PhotoConfig;
+  decorativeElements?: DecorativeElement[];
+}
+
+export interface HtmlTemplateConfig extends BaseTemplateConfig {
+  type: 'html';
+  templatePath: string; // Path to HTML template file
+  stylePath?: string;   // Optional CSS file path
+  customCSS?: string;   // Inline CSS
+  puppeteerOptions?: PuppeteerOptions;
+}
+
+export interface SvgTemplateConfig extends BaseTemplateConfig {
+  type: 'svg';
+  templatePath: string; // Path to SVG template file
+  placeholders: SvgPlaceholder[];
+}
+
+export type TemplateConfig = CanvasTemplateConfig | HtmlTemplateConfig | SvgTemplateConfig;
+
+export interface PuppeteerOptions {
+  viewport?: {
+    width: number;
+    height: number;
+    deviceScaleFactor?: number;
+  };
+  format?: 'png' | 'jpeg' | 'webp';
+  quality?: number; // For JPEG
+  fullPage?: boolean;
+  clip?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  waitForSelector?: string;
+  delay?: number; // Wait time in ms before capturing
+}
+
+export interface SvgPlaceholder {
+  id: string; // ID in SVG to replace
+  type: 'text' | 'image' | 'attr';
+  field: string; // Field from StudentData
+  attribute?: string; // For attr type (e.g., 'href', 'fill')
+}
+
+export interface TemplateField {
+  key: string;
+  label: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  fontSize: number;
+  fontFamily: string;
+  color: string;
+  textAlign: 'left' | 'center' | 'right';
+  fontWeight: 'normal' | 'bold';
+  maxLines?: number;
+  required: boolean;
+}
+
+export interface PhotoConfig {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  borderRadius: number;
+  borderWidth: number;
+  borderColor: string;
+}
+
+export interface DecorativeElement {
+  type: 'rectangle' | 'circle' | 'text' | 'image';
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+  radius?: number;
+  color?: string;
+  text?: string;
+  fontSize?: number;
+  imagePath?: string;
+}
+
+export interface ColumnMapping {
+  [templateKey: string]: string; // Maps template field keys to CSV column names
+}
+
+export interface GenerationConfig {
+  csvPath: string;
+  outputDir: string;
+  templateName: string;
+  columnMapping?: ColumnMapping;
+  photoColumnName?: string;
+  nameColumnName?: string;
+  outputFormat?: 'png' | 'jpeg' | 'webp' | 'svg';
+}
+
+export interface ImageProcessingOptions {
+  format: 'png' | 'jpeg' | 'webp';
+  quality?: number;
+  resize?: {
+    width?: number;
+    height?: number;
+    fit?: 'contain' | 'cover' | 'fill' | 'inside' | 'outside';
+  };
+}
+
+// src/templates/default.ts
+import { CanvasTemplateConfig } from '../types';
+
+export const defaultTemplate: CanvasTemplateConfig = {
+  name: 'default',
+  type: 'canvas',
+  width: 800,
+  height: 1000,
+  backgroundColor: '#f5f5f5',
+  description: 'Classic canvas-based template with comprehensive fields',
+  photoConfig: {
+    x: 50,
+    y: 100,
+    width: 200,
+    height: 250,
+    borderRadius: 10,
+    borderWidth: 3,
+    borderColor: '#333'
+  },
+  fields: [
+    {
+      key: 'name',
+      label: 'Name',
+      x: 50,
+      y: 50,
+      width: 700,
+      height: 40,
+      fontSize: 28,
+      fontFamily: 'Arial',
+      color: '#2c3e50',
+      textAlign: 'left',
+      fontWeight: 'bold',
+      required: true
+    },
+    {
+      key: 'nickname',
+      label: 'Nickname',
+      x: 270,
+      y: 120,
+      width: 480,
+      height: 30,
+      fontSize: 18,
+      fontFamily: 'Arial',
+      color: '#7f8c8d',
+      textAlign: 'left',
+      fontWeight: 'normal',
+      required: false
+    },
+    {
+      key: 'department',
+      label: 'Department',
+      x: 270,
+      y: 160,
+      width: 480,
+      height: 30,
+      fontSize: 16,
+      fontFamily: 'Arial',
+      color: '#34495e',
+      textAlign: 'left',
+      fontWeight: 'bold',
+      required: true
+    },
+    {
+      key: 'stateOfOrigin',
+      label: 'State of Origin',
+      x: 270,
+      y: 200,
+      width: 480,
+      height: 30,
+      fontSize: 16,
+      fontFamily: 'Arial',
+      color: '#34495e',
+      textAlign: 'left',
+      fontWeight: 'normal',
+      required: true
+    },
+    {
+      key: 'mostChallengingCourse',
+      label: 'Most Challenging Course',
+      x: 50,
+      y: 380,
+      width: 700,
+      height: 60,
+      fontSize: 14,
+      fontFamily: 'Arial',
+      color: '#e74c3c',
+      textAlign: 'left',
+      fontWeight: 'normal',
+      maxLines: 2,
+      required: true
+    },
+    {
+      key: 'favoriteCourse',
+      label: 'Favorite Course',
+      x: 50,
+      y: 460,
+      width: 700,
+      height: 60,
+      fontSize: 14,
+      fontFamily: 'Arial',
+      color: '#27ae60',
+      textAlign: 'left',
+      fontWeight: 'normal',
+      maxLines: 2,
+      required: true
+    },
+    {
+      key: 'bestLevel',
+      label: 'Best Level',
+      x: 50,
+      y: 540,
+      width: 340,
+      height: 30,
+      fontSize: 14,
+      fontFamily: 'Arial',
+      color: '#8e44ad',
+      textAlign: 'left',
+      fontWeight: 'normal',
+      required: true
+    },
+    {
+      key: 'hobbies',
+      label: 'Hobbies',
+      x: 410,
+      y: 540,
+      width: 340,
+      height: 60,
+      fontSize: 14,
+      fontFamily: 'Arial',
+      color: '#f39c12',
+      textAlign: 'left',
+      fontWeight: 'normal',
+      maxLines: 2,
+      required: true
+    },
+    {
+      key: 'bestMoment',
+      label: 'Best Moment in School',
+      x: 50,
+      y: 620,
+      width: 700,
+      height: 80,
+      fontSize: 14,
+      fontFamily: 'Arial',
+      color: '#16a085',
+      textAlign: 'left',
+      fontWeight: 'normal',
+      maxLines: 3,
+      required: true
+    },
+    {
+      key: 'worstExperience',
+      label: 'Worst Experience',
+      x: 50,
+      y: 720,
+      width: 700,
+      height: 80,
+      fontSize: 14,
+      fontFamily: 'Arial',
+      color: '#c0392b',
+      textAlign: 'left',
+      fontWeight: 'normal',
+      maxLines: 3,
+      required: true
+    },
+    {
+      key: 'afterSchool',
+      label: 'After School Plans',
+      x: 50,
+      y: 820,
+      width: 700,
+      height: 60,
+      fontSize: 14,
+      fontFamily: 'Arial',
+      color: '#2980b9',
+      textAlign: 'left',
+      fontWeight: 'normal',
+      maxLines: 2,
+      required: true
+    },
+    {
+      key: 'relationshipStatus',
+      label: 'Relationship Status',
+      x: 50,
+      y: 900,
+      width: 700,
+      height: 60,
+      fontSize: 14,
+      fontFamily: 'Arial',
+      color: '#e67e22',
+      textAlign: 'left',
+      fontWeight: 'normal',
+      maxLines: 2,
+      required: true
+    }
+  ],
+  decorativeElements: [
+    {
+      type: 'rectangle',
+      x: 0,
+      y: 0,
+      width: 800,
+      height: 10,
+      color: '#3498db'
+    },
+    {
+      type: 'rectangle',
+      x: 0,
+      y: 990,
+      width: 800,
+      height: 10,
+      color: '#3498db'
+    }
+  ]
+};
+
+// src/templates/modern.ts
+import { CanvasTemplateConfig } from '../types';
+
+export const modernTemplate: CanvasTemplateConfig = {
+  name: 'modern',
+  type: 'canvas',
+  width: 600,
+  height: 800,
+  backgroundColor: '#1a1a1a',
+  description: 'Dark themed canvas template with modern design',
+  photoConfig: {
+    x: 50,
+    y: 80,
+    width: 150,
+    height: 200,
+    borderRadius: 15,
+    borderWidth: 4,
+    borderColor: '#ff6b6b'
+  },
+  fields: [
+    {
+      key: 'name',
+      label: 'Name',
+      x: 220,
+      y: 100,
+      width: 330,
+      height: 35,
+      fontSize: 24,
+      fontFamily: 'Arial',
+      color: '#ffffff',
+      textAlign: 'left',
+      fontWeight: 'bold',
+      required: true
+    },
+    {
+      key: 'department',
+      label: 'Department',
+      x: 220,
+      y: 140,
+      width: 330,
+      height: 25,
+      fontSize: 14,
+      fontFamily: 'Arial',
+      color: '#ff6b6b',
+      textAlign: 'left',
+      fontWeight: 'normal',
+      required: true
+    },
+    {
+      key: 'stateOfOrigin',
+      label: 'State',
+      x: 220,
+      y: 170,
+      width: 330,
+      height: 25,
+      fontSize: 14,
+      fontFamily: 'Arial',
+      color: '#4ecdc4',
+      textAlign: 'left',
+      fontWeight: 'normal',
+      required: true
+    },
+    {
+      key: 'hobbies',
+      label: 'Hobbies',
+      x: 50,
+      y: 320,
+      width: 500,
+      height: 50,
+      fontSize: 12,
+      fontFamily: 'Arial',
+      color: '#ffe66d',
+      textAlign: 'left',
+      fontWeight: 'normal',
+      maxLines: 2,
+      required: true
+    },
+    {
+      key: 'bestMoment',
+      label: 'Best Moment',
+      x: 50,
+      y: 390,
+      width: 500,
+      height: 70,
+      fontSize: 12,
+      fontFamily: 'Arial',
+      color: '#a8e6cf',
+      textAlign: 'left',
+      fontWeight: 'normal',
+      maxLines: 3,
+      required: true
+    },
+    {
+      key: 'afterSchool',
+      label: 'Future Plans',
+      x: 50,
+      y: 480,
+      width: 500,
+      height: 70,
+      fontSize: 12,
+      fontFamily: 'Arial',
+      color: '#ffd93d',
+      textAlign: 'left',
+      fontWeight: 'normal',
+      maxLines: 3,
+      required: true
+    }
+  ],
+  decorativeElements: [
+    {
+      type: 'rectangle',
+      x: 0,
+      y: 0,
+      width: 600,
+      height: 5,
+      color: '#ff6b6b'
+    },
+    {
+      type: 'rectangle',
+      x: 0,
+      y: 795,
+      width: 600,
+      height: 5,
+      color: '#ff6b6b'
+    },
+    {
+      type: 'circle',
+      x: 550,
+      y: 50,
+      radius: 30,
+      color: '#4ecdc4'
+    }
+  ]
+};
+
+// src/templates/html/glamour.ts
+import { HtmlTemplateConfig } from '../types';
+
+export const glamourTemplate: HtmlTemplateConfig = {
+  name: 'glamour',
+  type: 'html',
+  width: 800,
+  height: 1000,
+  description: 'Glamorous HTML template with gradient backgrounds and modern typography',
+  templatePath: 'templates/html/glamour.hbs',
+  puppeteerOptions: {
+    viewport: {
+      width: 800,
+      height: 1000,
+      deviceScaleFactor: 2
+    },
+    format: 'png',
+    fullPage: false,
+    clip: {
+      x: 0,
+      y: 0,
+      width: 800,
+      height: 1000
+    },
+    delay: 1000
+  }
+};
+
+// src/templates/html/minimal.ts
+import { HtmlTemplateConfig } from '../types';
+
+export const minimalTemplate: HtmlTemplateConfig = {
+  name: 'minimal',
+  type: 'html',
+  width: 600,
+  height: 800,
+  description: 'Clean minimal HTML template with typography focus',
+  templatePath: 'templates/html/minimal.hbs',
+  puppeteerOptions: {
+    viewport: {
+      width: 600,
+      height: 800,
+      deviceScaleFactor: 2
+    },
+    format: 'png',
+    fullPage: false,
+    clip: {
+      x: 0,
+      y: 0,
+      width: 600,
+      height: 800
+    },
+    delay: 500
+  }
+};
+
+// src/templates/svg/badge.ts
+import { SvgTemplateConfig } from '../types';
+
+export const badgeTemplate: SvgTemplateConfig = {
+  name: 'badge',
+  type: 'svg',
+  width: 400,
+  height: 500,
+  description: 'Badge-style SVG template with clean geometry',
+  templatePath: 'templates/svg/badge.svg',
+  placeholders: [
+    { id: 'student-name', type: 'text', field: 'name' },
+    { id: 'student-department', type: 'text', field: 'department' },
+    { id: 'student-state', type: 'text', field: 'stateOfOrigin' },
+    { id: 'student-photo', type: 'image', field: 'photoUrl' },
+    { id: 'best-course', type: 'text', field: 'favoriteCourse' },
+    { id: 'hobbies-text', type: 'text', field: 'hobbies' }
+  ]
+};',
+      color: '#a8e6cf',
+      textAlign: 'left',
+      fontWeight: 'normal',
+      maxLines: 3,
+      required: true
+    },
+    {
+      key: 'afterSchool',
+      label: 'Future Plans',
+      x: 50,
+      y: 480,
+      width: 500,
+      height: 70,
+      fontSize: 12,
+      fontFamily: 'Arial',
+      color: '#ffd93d',
+      textAlign: 'left',
+      fontWeight: 'normal',
+      maxLines: 3,
+      required: true
+    }
+  ],
+  decorativeElements: [
+    {
+      type: 'rectangle',
+      x: 0,
+      y: 0,
+      width: 600,
+      height: 5,
+      color: '#ff6b6b'
+    },
+    {
+      type: 'rectangle',
+      x: 0,
+      y: 795,
+      width: 600,
+      height: 5,
+      color: '#ff6b6b'
+    },
+    {
+      type: 'circle',
+      x: 550,
+      y: 50,
+      radius: 30,
+      color: '#4ecdc4'
+    }
+  ]
+};
+
+// src/templates/index.ts
+import { TemplateConfig } from '../types';
+import { defaultTemplate } from './default';
+import { modernTemplate } from './modern';
+import { glamourTemplate } from './html/glamour';
+import { minimalTemplate } from './html/minimal';
+import { badgeTemplate } from './svg/badge';
+
+export const templates: { [key: string]: TemplateConfig } = {
+  default: defaultTemplate,
+  modern: modernTemplate,
+  glamour: glamourTemplate,
+  minimal: minimalTemplate,
+  badge: badgeTemplate
+};
+
+export const getTemplate = (name: string): TemplateConfig => {
+  return templates[name] || defaultTemplate;
+};
+
+export const getTemplateNames = (): string[] => {
+  return Object.keys(templates);
+};
+
+export const getTemplatesByType = (type: 'canvas' | 'html' | 'svg'): TemplateConfig[] => {
+  return Object.values(templates).filter(template => template.type === type);
+};
+
+// src/templates/html/glamour.hbs
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{name}} - FYB</title>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            width: 800px;
+            height: 1000px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Inter', sans-serif;
+            color: white;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .glamour-card {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            padding: 60px 50px;
+            background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        
+        .decorative-bg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="grain" patternUnits="userSpaceOnUse" width="100" height="100"><circle cx="50" cy="50" r="1" fill="white" opacity="0.1"/></pattern></defs><rect width="100" height="100" fill="url(%23grain)"/></svg>');
+            opacity: 0.3;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            position: relative;
+            z-index: 10;
+        }
+        
+        .name {
+            font-family: 'Playfair Display', serif;
+            font-size: 42px;
+            font-weight: 700;
+            margin-bottom: 10px;
+            background: linear-gradient(45deg, #fff, #f0f0f0);
+            -webkit-// src/core/svg-generator.ts
+import * as fs from 'fs-extra';
+import * as path from 'path';
+import { JSDOM } from 'jsdom';
+import { StudentData, SvgTemplateConfig } from '../types';
+import { ImageUtils } from './image-utils';
+
+export class SvgGenerator {
+  async generateImage(
+    studentData: StudentData,
+    template: SvgTemplateConfig,
+    outputPath: string
+  ): Promise<void> {
+    try {
+      // Load SVG template
+      const svgContent = await this.loadTemplate(template);
+      
+      // Process student data
+      const processedData = await this.processStudentDataForSvg(studentData);
+      
+      // Replace placeholders
+      const finalSvg = await this.replacePlaceholders(svgContent, processedData, template);
+      
+      // Save SVG
+      if (outputPath.endsWith('.svg')) {
+        await fs.writeFile(outputPath, finalSvg);
+      } else {
+        // Convert SVG to PNG using Sharp
+        const sharp = require('sharp');
+        const pngBuffer = await sharp(Buffer.from(finalSvg))
+          .png()
+          .toBuffer();
+        await fs.writeFile(outputPath, pngBuffer);
+      }
+    } catch (error) {
+      console.error('Error generating SVG image:', error);
+      throw error;
+    }
+  }
+
+  private async loadTemplate(template: SvgTemplateConfig): Promise<string> {
+    const possiblePaths = [
+      template.templatePath,
+      path.resolve(template.templatePath),
+      path.join(process.cwd(), template.templatePath),
+      path.join(process.cwd(), 'src', template.templatePath),
+      path.join(__dirname, '..', template.templatePath)
+    ];
+
+    for (const templatePath of possiblePaths) {
+      try {
+        if (await fs.pathExists(templatePath)) {
+          return await fs.readFile(templatePath, 'utf8');
+        }
+      } catch (error) {
+        // Continue to next path
+      }
+    }
+
+    // Return embedded template if file not found
+    return this.getEmbeddedSvgTemplate(template.name);
+  }
+
+  private async processStudentDataForSvg(studentData: StudentData): Promise<StudentData> {
+    const processed = { ...studentData };
+
+    // Process photo for SVG embedding
+    const photoInput = studentData.photoPath || studentData.photoUrl || studentData.photoBase64;
+    if (photoInput) {
+      const processedPhoto = await ImageUtils.processImageInput(photoInput);
+      if (processedPhoto) {
+        processed.photoUrl = processedPhoto;
+      }
+    }
+
+    return processed;
+  }
+
+  private async replacePlaceholders(
+    svgContent: string,
+    studentData: StudentData,
+    template: SvgTemplateConfig
+  ): Promise<string> {
+    const dom = new JSDOM(svgContent, { contentType: 'image/svg+xml' });
+    const document = dom.window.document;
+
+    for (const placeholder of template.placeholders) {
+      const element = document.getElementById(placeholder.id);
+      if (!element) continue;
+
+      const value = studentData[placeholder.field];
+      if (!value) continue;
+
+      switch (placeholder.type) {
+        case 'text':
+          element.textContent = String(value);
+          break;
+        
+        case 'image':
+          if (element.tagName.toLowerCase() === 'image') {
+            element.setAttribute('href', String(value));
+            element.setAttribute('xlink:href', String(value)); // Fallback for older browsers
+          }
+          break;
+        
+        case 'attr':
+          if (placeholder.attribute) {
+            element.setAttribute(placeholder.attribute, String(value));
+          }
+          break;
+      }
+    }
+
+    return dom.serialize();
+  }
+
+  private getEmbeddedSvgTemplate(templateName: string): string {
+    // Return the badge template as default
+    return `<svg width="400" height="500" viewBox="0 0 400 500" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" style="stop-color:#667eea"/>
+          <stop offset="100%" style="stop-color:#764ba2"/>
+        </linearGradient>
+        <linearGradient id="cardGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" style="stop-color:#ffffff;stop-opacity:0.95"/>
+          <stop offset="100%" style="stop-color:#f8f9fa;stop-opacity:0.95"/>
+        </linearGradient>
+        <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+          <dropShadow dx="0" dy="4" stdDeviation="8" flood-opacity="0.3"/>
+        </filter>
+      </defs>
+      
+      <rect width="400" height="500" fill="url(#bgGradient)"/>
+      <rect x="30" y="40" width="340" height="420" rx="20" fill="url(#cardGradient)" filter="url(#shadow)"/>
+      <rect x="30" y="40" width="340" height="8" rx="20" fill="#3498db"/>
+      
+      <circle cx="200" cy="140" r="50" fill="#ecf0f1" stroke="#bdc3c7" stroke-width="2"/>
+      <image id="student-photo" x="150" y="90" width="100" height="100" clip-path="circle(50px at 50px 50px)" href=""/>
+      
+      <text id="student-name" x="200" y="220" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#2c3e50">Student Name</text>
+      <text id="student-department" x="200" y="245" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#7f8c8d">Department</text>
+      <text id="student-state" x="200" y="265" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#95a5a6">State</text>
+      
+      <line x1="60" y1="285" x2="340" y2="285" stroke="#ecf0f1" stroke-width="1"/>
+      
+      <text x="60" y="310" font-family="Arial, sans-serif" font-size="10" fill="#95a5a6">FAVORITE COURSE</text>
+      <text id="best-course" x="60" y="325" font-family="Arial, sans-serif" font-size="12" fill="#2c3e50">Course Name</text>
+      
+      <text x="60" y="355" font-family="Arial, sans-serif" font-size="10" fill="#95a5a6">HOBBIES</text>
+      <text id="hobbies-text" x="60" y="370" font-family="Arial, sans-serif" font-size="12" fill="#2c3e50">Hobbies</text>
+      
+      <circle cx="80" cy="420" r="15" fill="#3498db" opacity="0.3"/>
+      <circle cx="320" cy="420" r="10" fill="#e74c3c" opacity="0.3"/>
+      <circle cx="350" cy="400" r="8" fill="#f39c12" opacity="0.3"/>
+      
+      <text x="200" y="445" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#95a5a6" opacity="0.7">FINAL YEAR BRETHREN</text>
+    </svg>`;
+  }
+}
+
+// src/core/generator.ts
+import * as path from 'path';
+import * as fs from 'fs-extra';
+import { CSVParser } from './csv-parser';
+import { ImageGenerator } from './image-generator';
+import { HtmlGenerator } from './html-generator';
+import { SvgGenerator } from './svg-generator';
+import { getTemplate } from '../templates';
+import { GenerationConfig, StudentData, TemplateConfig } from '../types';
+
+export class FYBGenerator {
+  private htmlGenerator: HtmlGenerator;
+  private svgGenerator: SvgGenerator;
+
+  constructor() {
+    this.htmlGenerator = new HtmlGenerator();
+    this.svgGenerator = new SvgGenerator();
+  }
+
+  async generate(config: GenerationConfig): Promise<void> {
+    console.log('Starting FYB generation...');
+    
+    // Ensure output directory exists
+    await fs.ensureDir(config.outputDir);
+
+    // Get template
+    const template = getTemplate(config.templateName);
+    console.log(`Using template: ${template.name} (${template.type})`);
+
+    // Parse CSV
+    console.log('Parsing CSV...');
+    const studentData = await CSVParser.parseCSV(config.csvPath, config.columnMapping);
+    console.log(`Found ${studentData.length} students`);
+
+    // Generate images based on template type
+    console.log('Generating images...');
+    try {
+      for (let i = 0; i < studentData.length; i++) {
+        const student = studentData[i];
+        const sanitizedName = this.sanitizeFileName(student.name || `student_${i + 1}`);
+        
+        // Determine output format and extension
+        const outputFormat = this.getOutputFormat(template, config.outputFormat);
+        const outputPath = path.join(config.outputDir, `${sanitizedName}.${outputFormat}`);
+
+        try {
+          await this.generateSingleImage(student, template, outputPath);
+          console.log(`✓ Generated: ${outputPath}`);
+        } catch (error) {
+          console.error(`✗ Failed to generate image for ${student.name}:`, error);
+        }
+      }
+    } finally {
+      // Cleanup resources
+      await this.htmlGenerator.destroy();
+    }
+
+    console.log('Generation complete!');
+  }
+
+  private async generateSingleImage(
+    studentData: StudentData,
+    template: TemplateConfig,
+    outputPath: string
+  ): Promise<void> {
+    switch (template.type) {
+      case 'canvas':
+        const canvasGenerator = new ImageGenerator(template as any);
+        await canvasGenerator.generateImage(studentData, outputPath);
+        break;
+      
+      case 'html':
+        await this.htmlGenerator.generateImage(
+          studentData,
+          template as any,
+          outputPath
+        );
+        break;
+      
+      case 'svg':
+        await this.svgGenerator.generateImage(
+          studentData,
+          template as any,
+          outputPath
+        );
+        break;
+      
+      default:
+        throw new Error(`Unsupported template type: ${(template as any).type}`);
+    }
+  }
+
+  private getOutputFormat(template: TemplateConfig, configFormat?: string): string {
+    if (configFormat) return configFormat;
+    
+    switch (template.type) {
+      case 'svg':
+        return 'svg';
+      case 'html':
+        return 'png';
+      case 'canvas':
+      default:
+        return 'png';
+    }
+  }
+
+  private sanitizeFileName(name: string): string {
+    return name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+  }
+
+  async getCSVHeaders(csvPath: string): Promise<string[]> {
+    return CSVParser.getCSVHeaders(csvPath);
+  }
+
+  async destroy(): Promise<void> {
+    await this.htmlGenerator.destroy();
+  }
+}
+
+// src/cli.ts - Update CLI to support new template types
+#!/usr/bin/env node
+
+import { Command } from 'commander';
+import * as path from 'path';
+import * as fs from 'fs-extra';
+import { FYBGenerator } from './core/generator';
+import { getTemplateNames, getTemplatesByType } from './templates';
+import { ColumnMapping } from './types';
+
+const program = new Command();
+
+program
+  .name('fyb')
+  .description('Final Year Brethren image generator with Canvas, HTML, and SVG support')
+  .version('2.0.0');
+
+program
+  .command('generate')
+  .description('Generate FYB images from CSV data')
+  .requiredOption('-i, --input <path>', 'Path to CSV file')
+  .requiredOption('-o, --output <path>', 'Output directory')
+  .option('-t, --template <name>', 'Template name', 'default')
+  .option('-f, --format <format>', 'Output format (png, jpeg, webp, svg)', 'png')
+  .option('-c, --config <path>', 'Path to column mapping config file')
+  .option('--name-column <name>', 'CSV column name for student name', 'name')
+  .option('--photo-column <name>', 'CSV column name for photo path/URL/base64', 'photoPath')
+  .option('--department-column <name>', 'CSV column name for department', 'department')
+  .option('--state-column <name>', 'CSV column name for state', 'stateOfOrigin')
+  .action(async (options) => {
+    const generator = new FYBGenerator();
+    
+    try {
+      let columnMapping: ColumnMapping | undefined;
+
+      // Load column mapping from config file if provided
+      if (options.config) {
+        const configPath = path.resolve(options.config);
+        if (await fs.pathExists(configPath)) {
+          columnMapping = await fs.readJson(configPath);
+        } else {
+          console.error(`Config file not found: ${configPath}`);
+          process.exit(1);
+        }
+      } else {
+        // Create mapping from CLI options
+        columnMapping = {
+          name: options.nameColumn,
+          photoPath: options.photoColumn,
+          department: options.departmentColumn,
+          stateOfOrigin: options.stateColumn
+        };
+      }
+
+      await generator.generate({
+        csvPath: path.resolve(options.input),
+        outputDir: path.resolve(options.output),
+        templateName: options.template,
+        columnMapping,
+        outputFormat: options.format
+      });
+    } catch (error) {
+      console.error('Error:', error);
+      process.exit(1);
+    } finally {
+      await generator.destroy();
+    }
+  });
+
+program
+  .command('templates')
+  .description('List available templates')
+  .option('-t, --type <type>', 'Filter by template type (canvas, html, svg)')
+  .action((options) => {
+    if (options.type) {
+      const templates = getTemplatesByType(options.type);
+      console.log(`Available ${options.type} templates:`);
+      templates.forEach(template => {
+        console.log(`  - ${template.name}: ${template.description || 'No description'}`);
+      });
+    } else {
+      console.log('Available templates:');
+      getTemplateNames().forEach(name => {
+        const template = require('./templates').getTemplate(name);
+        console.log(`  - ${name} (${template.type}): ${template.description || 'No description'}`);
+      });
+    }
+  });
+
+program
+  .command('headers')
+  .description('Show CSV column headers')
+  .requiredOption('-i, --input <path>', 'Path to CSV file')
+  .action(async (options) => {
+    const generator = new FYBGenerator();
+    
+    try {
+      const headers = await generator.getCSVHeaders(path.resolve(options.input));
+      console.log('CSV Headers:');
+      headers.forEach((header, index) => {
+        console.log(`  ${index + 1}. ${header}`);
+      });
+    } catch (error) {
+      console.error('Error:', error);
+      process.exit(1);
+    } finally {
+      await generator.destroy();
+    }
+  });
+
+program
+  .command('init-config')
+  .description('Create a sample column mapping config file')
+  .option('-o, --output <path>', 'Output path for config file', 'column-mapping.json')
+  .action(async (options) => {
+    const sampleConfig: ColumnMapping = {
+      name: 'Full Name',
+      nickname: 'Nickname',
+      department: 'Department',
+      stateOfOrigin: 'State',
+      mostChallengingCourse: 'Hardest Course',
+      favoriteCourse: 'Best Course',
+      bestLevel: 'Favorite Level',
+      hobbies: 'Hobbies',
+      bestMoment: 'Best Memory',
+      worstExperience: 'Worst Experience',
+      afterSchool: 'Future Plans',
+      relationshipStatus: 'Relationship',
+      photoPath: 'Photo Path',
+      photoUrl: 'Photo URL',
+      photoBase64: 'Photo Base64'
+    };
+
+    await fs.writeJson(options.output, sampleConfig, { spaces: 2 });
+    console.log(`Sample config created: ${options.output}`);
+    console.log('Edit this file to match your CSV column names.');
+    console.log('Photo fields support: file paths, URLs, or base64 data.');
+  });
+
+program.parse();url(#shadow)"/>
+    
+    <!-- Header Accent -->
+    <rect x="30" y="40" width="340" height="8" rx="20" fill="#3498db"/>
+    
+    <!-- Photo Placeholder/Area -->
+    <circle cx="200" cy="140" r="50" fill="#ecf0f1" stroke="#bdc3c7" stroke-width="2"/>
+    <image id="student-photo" x="150" y="90" width="100" height="100" clip-path="circle(50px at 50px 50px)" href=""/>
+    
+    <!-- Name -->
+    <text id="student-name" x="200" y="220" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#2c3e50">Student Name</text>
+    
+    <!-- Department -->
+    <text id="student-department" x="200" y="245" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#7f8c8d">Department</text>
+    
+    <!-- State -->
+    <text id="student-state" x="200" y="265" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#95a5a6">State</text>
+    
+    <!-- Divider Line -->
+    <line x1="60" y1="285" x2="340" y2="285" stroke="#ecf0f1" stroke-width="1"/>
+    
+    <!-- Best Course -->
+    <text x="60" y="310" font-family="Arial, sans-serif" font-size="10" fill="#95a5a6" text-transform="uppercase">FAVORITE COURSE</text>
+    <text id="best-course" x="60" y="325" font-family="Arial, sans-serif" font-size="12" fill="#2c3e50">Course Name</text>
+    
+    <!-- Hobbies -->
+    <text x="60" y="355" font-family="Arial, sans-serif" font-size="10" fill="#95a5a6" text-transform="uppercase">HOBBIES</text>
+    <text id="hobbies-text" x="60" y="370" font-family="Arial, sans-serif" font-size="12" fill="#2c3e50">Hobbies</text>
+    
+    <!-- Decorative Elements -->
+    <circle cx="80" cy="420" r="15" fill="#3498db" opacity="0.3"/>
+    <circle cx="320" cy="420" r="10" fill="#e74c3c" opacity="0.3"/>
+    <circle cx="350" cy="400" r="8" fill="#f39c12" opacity="0.3"/>
+    
+    <!-- Footer -->
+    <text x="200" y="445" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#95a5a6" opacity="0.7">FINAL YEAR BRETHREN</text>
+</svg>
+
+// src/core/csv-parser.ts
+import * as fs from 'fs';
+import * as csv from 'csv-parser';
+import { StudentData, ColumnMapping } from '../types';
+
+export class CSVParser {
+  static async parseCSV(filePath: string, columnMapping?: ColumnMapping): Promise<StudentData[]> {
+    return new Promise((resolve, reject) => {
+      const results: StudentData[] = [];
+      
+      fs.createReadStream(filePath)
+        .pipe(csv())
+        .on('data', (row) => {
+          const mappedData = this.mapRowToStudentData(row, columnMapping);
+          results.push(mappedData);
+        })
+        .on('end', () => {
+          resolve(results);
+        })
+        .on('error', (error) => {
+          reject(error);
+        });
+    });
+  }
+
+  private static mapRowToStudentData(row: any, columnMapping?: ColumnMapping): StudentData {
+    const studentData: StudentData = {
+      name: '',
+      department: '',
+      stateOfOrigin: '',
+      mostChallengingCourse: '',
+      favoriteCourse: '',
+      bestLevel: '',
+      hobbies: '',
+      bestMoment: '',
+      worstExperience: '',
+      afterSchool: '',
+      relationshipStatus: ''
+    };
+
+    if (columnMapping) {
+      // Use custom column mapping
+      for (const [templateKey, csvColumn] of Object.entries(columnMapping)) {
+        if (row[csvColumn] !== undefined) {
+          studentData[templateKey] = row[csvColumn];
+        }
+      }
+    } else {
+      // Use default column names (exact match)
+      Object.keys(studentData).forEach(key => {
+        if (row[key] !== undefined) {
+          studentData[key] = row[key];
+        }
+      });
+    }
+
+    // Add any additional columns that weren't mapped
+    Object.keys(row).forEach(key => {
+      if (!studentData.hasOwnProperty(key)) {
+        studentData[key] = row[key];
+      }
+    });
+
+    return studentData;
+  }
+
+  static getCSVHeaders(filePath: string): Promise<string[]> {
+    return new Promise((resolve, reject) => {
+      let headers: string[] = [];
+      
+      fs.createReadStream(filePath)
+        .pipe(csv())
+        .on('headers', (headerList) => {
+          headers = headerList;
+        })
+        .on('data', () => {
+          // We only need the first row to get headers
+        })
+        .on('end', () => {
+          resolve(headers);
+        })
+        .on('error', (error) => {
+          reject(error);
+        });
+    });
+  }
+}
+
+// src/core/image-generator.ts
+import { createCanvas, loadImage, Canvas, CanvasRenderingContext2D } from 'canvas';
+import * as fs from 'fs-extra';
+import * as path from 'path';
+import { StudentData, TemplateConfig, TemplateField, DecorativeElement } from '../types';
+
+export class ImageGenerator {
+  private canvas: Canvas;
+  private ctx: CanvasRenderingContext2D;
+
+  constructor(private template: TemplateConfig) {
+    this.canvas = createCanvas(template.width, template.height);
+    this.ctx = this.canvas.getContext('2d');
+  }
+
+  async generateImage(studentData: StudentData, outputPath: string): Promise<void> {
+    // Clear canvas and set background
+    this.ctx.fillStyle = this.template.backgroundColor;
+    this.ctx.fillRect(0, 0, this.template.width, this.template.height);
+
+    // Draw decorative elements
+    this.drawDecorativeElements();
+
+    // Draw photo if available
+    await this.drawPhoto(studentData);
+
+    // Draw all text fields
+    this.drawTextFields(studentData);
+
+    // Save the image
+    await this.saveImage(outputPath);
+  }
+
+  private drawDecorativeElements(): void {
+    if (!this.template.decorativeElements) return;
+
+    this.template.decorativeElements.forEach(element => {
+      this.ctx.fillStyle = element.color || '#000';
+      
+      switch (element.type) {
+        case 'rectangle':
+          this.ctx.fillRect(element.x, element.y, element.width || 100, element.height || 100);
+          break;
+        case 'circle':
+          this.ctx.beginPath();
+          this.ctx.arc(element.x, element.y, element.radius || 50, 0, 2 * Math.PI);
+          this.ctx.fill();
+          break;
+        case 'text':
+          if (element.text) {
+            this.ctx.font = `${element.fontSize || 16}px Arial`;
+            this.ctx.fillText(element.text, element.x, element.y);
+          }
+          break;
+      }
+    });
+  }
+
+  private async drawPhoto(studentData: StudentData): Promise<void> {
+    const photoPath = studentData.photoPath || studentData.photo;
+    if (!photoPath || !fs.existsSync(photoPath)) {
+      // Draw placeholder if no photo
+      this.drawPhotoPlaceholder();
+      return;
+    }
+
+    try {
+      const image = await loadImage(photoPath);
+      const config = this.template.photoConfig;
+      
+      // Draw photo with border radius
+      this.ctx.save();
+      this.createRoundedRect(config.x, config.y, config.width, config.height, config.borderRadius);
+      this.ctx.clip();
+      
+      // Draw the image to fit within the bounds
+      this.ctx.drawImage(image, config.x, config.y, config.width, config.height);
+      
+      this.ctx.restore();
+      
+      // Draw border
+      if (config.borderWidth > 0) {
+        this.ctx.strokeStyle = config.borderColor;
+        this.ctx.lineWidth = config.borderWidth;
+        this.createRoundedRect(config.x, config.y, config.width, config.height, config.borderRadius);
+        this.ctx.stroke();
+      }
+    } catch (error) {
+      console.warn(`Could not load photo: ${photoPath}`, error);
+      this.drawPhotoPlaceholder();
+    }
+  }
+
+  private drawPhotoPlaceholder(): void {
+    const config = this.template.photoConfig;
+    
+    // Draw placeholder background
+    this.ctx.fillStyle = '#ddd';
+    this.createRoundedRect(config.x, config.y, config.width, config.height, config.borderRadius);
+    this.ctx.fill();
+    
+    // Draw placeholder text
+    this.ctx.fillStyle = '#999';
+    this.ctx.font = '16px Arial';
+    this.ctx.textAlign = 'center';
+    this.ctx.fillText('No Photo', config.x + config.width / 2, config.y + config.height / 2);
+    
+    // Draw border
+    if (config.borderWidth > 0) {
+      this.ctx.strokeStyle = config.borderColor;
+      this.ctx.lineWidth = config.borderWidth;
+      this.createRoundedRect(config.x, config.y, config.width, config.height, config.borderRadius);
+      this.ctx.stroke();
+    }
+  }
+
+  private createRoundedRect(x: number, y: number, width: number, height: number, radius: number): void {
+    this.ctx.beginPath();
+    this.ctx.moveTo(x + radius, y);
+    this.ctx.lineTo(x + width - radius, y);
+    this.ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+    this.ctx.lineTo(x + width, y + height - radius);
+    this.ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+    this.ctx.lineTo(x + radius, y + height);
+    this.ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+    this.ctx.lineTo(x, y + radius);
+    this.ctx.quadraticCurveTo(x, y, x + radius, y);
+    this.ctx.closePath();
+  }
+
+  private drawTextFields(studentData: StudentData): void {
+    this.template.fields.forEach(field => {
+      const value = studentData[field.key];
+      if (!value && field.required) {
+        console.warn(`Required field '${field.key}' is missing for student: ${studentData.name}`);
+        return;
+      }
+
+      if (value) {
+        this.drawTextField(field, `${field.label}: ${value}`);
+      }
+    });
+  }
+
+  private drawTextField(field: TemplateField, text: string): void {
+    this.ctx.fillStyle = field.color;
+    this.ctx.font = `${field.fontWeight} ${field.fontSize}px ${field.fontFamily}`;
+    this.ctx.textAlign = field.textAlign;
+
+    const lines = this.wrapText(text, field.width);
+    const maxLines = field.maxLines || lines.length;
+    const lineHeight = field.fontSize * 1.2;
+
+    for (let i = 0; i < Math.min(lines.length, maxLines); i++) {
+      const y = field.y + (i * lineHeight);
+      let x = field.x;
+      
+      if (field.textAlign === 'center') {
+        x = field.x + field.width / 2;
+      } else if (field.textAlign === 'right') {
+        x = field.x + field.width;
+      }
+
+      this.ctx.fillText(lines[i], x, y);
+    }
+  }
+
+  private wrapText(text: string, maxWidth: number): string[] {
+    const words = text.split(' ');
+    const lines: string[] = [];
+    let currentLine = '';
+
+    for (const word of words) {
+      const testLine = currentLine + (currentLine ? ' ' : '') + word;
+      const metrics = this.ctx.measureText(testLine);
+      
+      if (metrics.width > maxWidth && currentLine) {
+        lines.push(currentLine);
+        currentLine = word;
+      } else {
+        currentLine = testLine;
+      }
+    }
+    
+    if (currentLine) {
+      lines.push(currentLine);
+    }
+
+    return lines;
+  }
+
+  private async saveImage(outputPath: string): Promise<void> {
+    const buffer = this.canvas.toBuffer('image/png');
+    await fs.writeFile(outputPath, buffer);
+  }
+}
+
+// src/core/generator.ts
+import * as path from 'path';
+import * as fs from 'fs-extra';
+import { CSVParser } from './csv-parser';
+import { ImageGenerator } from './image-generator';
+import { getTemplate } from '../templates';
+import { GenerationConfig, StudentData } from '../types';
+
+export class FYBGenerator {
+  async generate(config: GenerationConfig): Promise<void> {
+    console.log('Starting FYB generation...');
+    
+    // Ensure output directory exists
+    await fs.ensureDir(config.outputDir);
+
+    // Get template
+    const template = getTemplate(config.templateName);
+    console.log(`Using template: ${template.name}`);
+
+    // Parse CSV
+    console.log('Parsing CSV...');
+    const studentData = await CSVParser.parseCSV(config.csvPath, config.columnMapping);
+    console.log(`Found ${studentData.length} students`);
+
+    // Generate images
+    console.log('Generating images...');
+    for (let i = 0; i < studentData.length; i++) {
+      const student = studentData[i];
+      const sanitizedName = this.sanitizeFileName(student.name || `student_${i + 1}`);
+      const outputPath = path.join(config.outputDir, `${sanitizedName}.png`);
+
+      try {
+        const generator = new ImageGenerator(template);
+        await generator.generateImage(student, outputPath);
+        console.log(`✓ Generated: ${outputPath}`);
+      } catch (error) {
+        console.error(`✗ Failed to generate image for ${student.name}:`, error);
+      }
+    }
+
+    console.log('Generation complete!');
+  }
+
+  private sanitizeFileName(name: string): string {
+    return name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+  }
+
+  async getCSVHeaders(csvPath: string): Promise<string[]> {
+    return CSVParser.getCSVHeaders(csvPath);
+  }
+}
+
+// src/cli.ts
+#!/usr/bin/env node
+
+import { Command } from 'commander';
+import * as path from 'path';
+import * as fs from 'fs-extra';
+import { FYBGenerator } from './core/generator';
+import { getTemplateNames } from './templates';
+import { ColumnMapping } from './types';
+
+const program = new Command();
+
+program
+  .name('fyb')
+  .description('Final Year Brethren image generator')
+  .version('1.0.0');
+
+program
+  .command('generate')
+  .description('Generate FYB images from CSV data')
+  .requiredOption('-i, --input <path>', 'Path to CSV file')
+  .requiredOption('-o, --output <path>', 'Output directory')
+  .option('-t, --template <name>', 'Template name', 'default')
+  .option('-c, --config <path>', 'Path to column mapping config file')
+  .option('--name-column <name>', 'CSV column name for student name', 'name')
+  .option('--photo-column <name>', 'CSV column name for photo path', 'photoPath')
+  .option('--department-column <name>', 'CSV column name for department', 'department')
+  .option('--state-column <name>', 'CSV column name for state', 'stateOfOrigin')
+  .action(async (options) => {
+    try {
+      let columnMapping: ColumnMapping | undefined;
+
+      // Load column mapping from config file if provided
+      if (options.config) {
+        const configPath = path.resolve(options.config);
+        if (await fs.pathExists(configPath)) {
+          columnMapping = await fs.readJson(configPath);
+        } else {
+          console.error(`Config file not found: ${configPath}`);
+          process.exit(1);
+        }
+      } else {
+        // Create mapping from CLI options
+        columnMapping = {
+          name: options.nameColumn,
+          photoPath: options.photoColumn,
+          department: options.departmentColumn,
+          stateOfOrigin: options.stateColumn
+        };
+      }
+
+      const generator = new FYBGenerator();
+      await generator.generate({
+        csvPath: path.resolve(options.input),
+        outputDir: path.resolve(options.output),
+        templateName: options.template,
+        columnMapping
+      });
+    } catch (error) {
+      console.error('Error:', error);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('templates')
+  .description('List available templates')
+  .action(() => {
+    console.log('Available templates:');
+    getTemplateNames().forEach(name => {
+      console.log(`  - ${name}`);
+    });
+  });
+
+program
+  .command('headers')
+  .description('Show CSV column headers')
+  .requiredOption('-i, --input <path>', 'Path to CSV file')
+  .action(async (options) => {
+    try {
+      const generator = new FYBGenerator();
+      const headers = await generator.getCSVHeaders(path.resolve(options.input));
+      console.log('CSV Headers:');
+      headers.forEach((header, index) => {
+        console.log(`  ${index + 1}. ${header}`);
+      });
+    } catch (error) {
+      console.error('Error:', error);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('init-config')
+  .description('Create a sample column mapping config file')
+  .option('-o, --output <path>', 'Output path for config file', 'column-mapping.json')
+  .action(async (options) => {
+    const sampleConfig: ColumnMapping = {
+      name: 'Full Name',
+      nickname: 'Nickname',
+      department: 'Department',
+      stateOfOrigin: 'State',
+      mostChallengingCourse: 'Hardest Course',
+      favoriteCourse: 'Best Course',
+      bestLevel: 'Favorite Level',
+      hobbies: 'Hobbies',
+      bestMoment: 'Best Memory',
+      worstExperience: 'Worst Experience',
+      afterSchool: 'Future Plans',
+      relationshipStatus: 'Relationship',
+      photoPath: 'Photo Path'
+    };
+
+    await fs.writeJson(options.output, sampleConfig, { spaces: 2 });
+    console.log(`Sample config created: ${options.output}`);
+    console.log('Edit this file to match your CSV column names.');
+  });
+
+program.parse();
+
+// src/web-server.ts
+import express from 'express';
+import multer from 'multer';
+import * as path from 'path';
+import * as fs from 'fs-extra';
+import { FYBGenerator } from './core/generator';
+import { getTemplateNames, getTemplate } from './templates';
+import { ColumnMapping } from './types';
+
+const app = express();
+const upload = multer({ dest: 'uploads/' });
+const generator = new FYBGenerator();
+
+app.use(express.static('public'));
+app.use(express.json());
+
+// Serve the main web interface
+app.get('/', (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>FYB Generator</title>
+        <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; background: #f4f4f4; }
+            .container { max-width: 1000px; margin: 0 auto; padding: 20px; }
+            .header { text-align: center; margin-bottom: 30px; }
+            .card { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
+            .form-group { margin-bottom: 20px; }
+            label { display: block; margin-bottom: 5px; font-weight: bold; color: #333; }
+            input, select, textarea { width: 100%; padding: 10px; border: 2px solid #ddd; border-radius: 5px; font-size: 16px; }
+            input:focus, select:focus, textarea:focus { border-color: #007bff; outline: none; }
+            .btn { background: #007bff; color: white; padding: 12px 24px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; }
+            .btn:hover { background: #0056b3; }
+            .btn-secondary { background: #6c757d; }
+            .btn-secondary:hover { background: #545b62; }
+            .mapping-container { display: none; }
+            .mapping-row { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; }
+            .mapping-row input { flex: 1; }
+            .progress { display: none; background: #e9ecef; border-radius: 5px; height: 20px; margin: 20px 0; }
+            .progress-bar { background: #007bff; height: 100%; border-radius: 5px; transition: width 0.3s; }
+            .results { display: none; }
+            .error { color: #dc3545; background: #f8d7da; padding: 10px; border-radius: 5px; margin: 10px 0; }
+            .success { color: #155724; background: #d4edda; padding: 10px; border-radius: 5px; margin: 10px 0; }
+            .template-preview { display: flex; gap: 20px; flex-wrap: wrap; }
+            .template-card { border: 2px solid #ddd; border-radius: 8px; padding: 15px; cursor: pointer; text-align: center; min-width: 200px; }
+            .template-card.selected { border-color: #007bff; background: #e7f3ff; }
+            .template-card h3 { color: #333; margin-bottom: 10px; }
+            .template-specs { font-size: 12px; color: #666; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>🎓 FYB Generator</h1>
+                <p>Generate Final Year Brethren images from CSV data</p>
+            </div>
+
+            <div class="card">
+                <h2>Upload CSV & Generate Images</h2>
+                <form id="uploadForm" enctype="multipart/form-data">
+                    <div class="form-group">
+                        <label for="csvFile">CSV File:</label>
+                        <input type="file" id="csvFile" name="csvFile" accept=".csv" required>
+                        <small>Upload a CSV file containing student data</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="template">Template:</label>
+                        <select id="template" name="template">
+                            <option value="default">Default Template</option>
+                            <option value="modern">Modern Template</option>
+                        </select>
+                    </div>
+
+                    <div class="template-preview" id="templatePreview">
+                        <div class="template-card selected" data-template="default">
+                            <h3>Default</h3>
+                            <div class="template-specs">800x1000px<br>Light theme<br>Comprehensive fields</div>
+                        </div>
+                        <div class="template-card" data-template="modern">
+                            <h3>Modern</h3>
+                            <div class="template-specs">600x800px<br>Dark theme<br>Minimal design</div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <button type="button" class="btn btn-secondary" onclick="showColumnMapping()">
+                            📋 Configure Column Mapping
+                        </button>
+                        <small>Map your CSV columns to template fields</small>
+                    </div>
+
+                    <div class="mapping-container" id="mappingContainer">
+                        <h3>Column Mapping</h3>
+                        <p>Map your CSV column names to the template fields:</p>
+                        <div id="mappingFields"></div>
+                        <button type="button" class="btn btn-secondary" onclick="loadCSVHeaders()">
+                            🔄 Load CSV Headers
+                        </button>
+                    </div>
+
+                    <button type="submit" class="btn">🚀 Generate Images</button>
+                </form>
+
+                <div class="progress" id="progress">
+                    <div class="progress-bar" id="progressBar"></div>
+                </div>
+
+                <div id="results" class="results"></div>
+            </div>
+
+            <div class="card">
+                <h2>📝 Sample CSV Format</h2>
+                <p>Your CSV should include these columns (or use column mapping):</p>
+                <textarea readonly rows="10">name,nickname,department,stateOfOrigin,mostChallengingCourse,favoriteCourse,bestLevel,hobbies,bestMoment,worstExperience,afterSchool,relationshipStatus,photoPath
+John Doe,Johnny,Computer Science,Lagos,Data Structures,Web Development,300 Level,Gaming and Coding,Graduating with First Class,Failed CSC 301 twice,Software Engineering,Single,/path/to/photo.jpg
+Jane Smith,Janey,Electrical Engineering,Abuja,Circuit Analysis,Digital Electronics,400 Level,Reading and Dancing,Meeting my best friends,Lab equipment malfunction,Hardware Design,In a relationship,/path/to/jane.jpg</textarea>
+                <small>Note: photoPath should contain the full path to student photos</small>
+            </div>
+        </div>
+
+        <script>
+            let csvHeaders = [];
+            const templateFields = {
+                default: ['name', 'nickname', 'department', 'stateOfOrigin', 'mostChallengingCourse', 'favoriteCourse', 'bestLevel', 'hobbies', 'bestMoment', 'worstExperience', 'afterSchool', 'relationshipStatus'],
+                modern: ['name', 'department', 'stateOfOrigin', 'hobbies', 'bestMoment', 'afterSchool']
+            };
+
+            // Template selection
+            document.querySelectorAll('.template-card').forEach(card => {
+                card.addEventListener('click', () => {
+                    document.querySelectorAll('.template-card').forEach(c => c.classList.remove('selected'));
+                    card.classList.add('selected');
+                    document.getElementById('template').value = card.dataset.template;
+                    updateMappingFields();
+                });
+            });
+
+            function showColumnMapping() {
+                const container = document.getElementById('mappingContainer');
+                container.style.display = container.style.display === 'none' ? 'block' : 'none';
+                if (container.style.display === 'block') {
+                    updateMappingFields();
+                }
+            }
+
+            function updateMappingFields() {
+                const template = document.getElementById('template').value;
+                const fields = templateFields[template] || templateFields.default;
+                const container = document.getElementById('mappingFields');
+                
+                container.innerHTML = fields.map(field => 
+                    '<div class="mapping-row">' +
+                    '<label>' + field + ':</label>' +
+                    '<input type="text" name="mapping_' + field + '" placeholder="CSV column name for ' + field + '" value="' + field + '">' +
+                    '</div>'
+                ).join('');
+            }
+
+            async function loadCSVHeaders() {
+                const fileInput = document.getElementById('csvFile');
+                if (!fileInput.files[0]) {
+                    alert('Please select a CSV file first');
+                    return;
+                }
+
+                const formData = new FormData();
+                formData.append('csvFile', fileInput.files[0]);
+
+                try {
+                    const response = await fetch('/api/csv/headers', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    if (response.ok) {
+                        csvHeaders = await response.json();
+                        populateColumnDropdowns();
+                    } else {
+                        throw new Error('Failed to load CSV headers');
+                    }
+                } catch (error) {
+                    showError('Error loading CSV headers: ' + error.message);
+                }
+            }
+
+            function populateColumnDropdowns() {
+                const mappingInputs = document.querySelectorAll('[name^="mapping_"]');
+                mappingInputs.forEach(input => {
+                    const originalValue = input.value;
+                    input.outerHTML = '<select name="' + input.name + '">' +
+                        '<option value="">-- Select Column --</option>' +
+                        csvHeaders.map(header => 
+                            '<option value="' + header + '"' + (header === originalValue ? ' selected' : '') + '>' + header + '</option>'
+                        ).join('') +
+                        '</select>';
+                });
+            }
+
+            document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                
+                const formData = new FormData();
+                const fileInput = document.getElementById('csvFile');
+                
+                if (!fileInput.files[0]) {
+                    showError('Please select a CSV file');
+                    return;
+                }
+
+                formData.append('csvFile', fileInput.files[0]);
+                formData.append('template', document.getElementById('template').value);
+
+                // Add column mapping
+                const mapping = {};
+                document.querySelectorAll('[name^="mapping_"]').forEach(input => {
+                    const field = input.name.replace('mapping_', '');
+                    if (input.value) {
+                        mapping[field] = input.value;
+                    }
+                });
+                formData.append('columnMapping', JSON.stringify(mapping));
+
+                showProgress();
+                
+                try {
+                    const response = await fetch('/api/generate', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (response.ok) {
+                        const result = await response.json();
+                        showSuccess('Images generated successfully! Generated ' + result.count + ' images.');
+                        showDownloadLink(result.downloadPath);
+                    } else {
+                        const error = await response.text();
+                        throw new Error(error);
+                    }
+                } catch (error) {
+                    showError('Error: ' + error.message);
+                } finally {
+                    hideProgress();
+                }
+            });
+
+            function showProgress() {
+                document.getElementById('progress').style.display = 'block';
+                document.getElementById('progressBar').style.width = '100%';
+            }
+
+            function hideProgress() {
+                document.getElementById('progress').style.display = 'none';
+            }
+
+            function showError(message) {
+                const results = document.getElementById('results');
+                results.innerHTML = '<div class="error">' + message + '</div>';
+                results.style.display = 'block';
+            }
+
+            function showSuccess(message) {
+                const results = document.getElementById('results');
+                results.innerHTML = '<div class="success">' + message + '</div>';
+                results.style.display = 'block';
+            }
+
+            function showDownloadLink(path) {
+                const results = document.getElementById('results');
+                results.innerHTML += '<div class="success"><a href="' + path + '" class="btn">📥 Download Generated Images</a></div>';
+            }
+
+            // Initialize
+            updateMappingFields();
+        </script>
+    </body>
+    </html>
+  `);
+});
+
+// API endpoints
+app.post('/api/csv/headers', upload.single('csvFile'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).send('No CSV file uploaded');
+    }
+
+    const headers = await generator.getCSVHeaders(req.file.path);
+    
+    // Clean up uploaded file
+    await fs.remove(req.file.path);
+    
+    res.json(headers);
+  } catch (error) {
+    console.error('Error getting CSV headers:', error);
+    res.status(500).send('Error reading CSV headers');
+  }
+});
+
+app.post('/api/generate', upload.single('csvFile'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).send('No CSV file uploaded');
+    }
+
+    const { template = 'default', columnMapping = '{}' } = req.body;
+    const outputDir = path.join('public', 'generated', Date.now().toString());
+    
+    await fs.ensureDir(outputDir);
+
+    let parsedMapping: ColumnMapping | undefined;
+    try {
+      parsedMapping = JSON.parse(columnMapping);
+      if (Object.keys(parsedMapping).length === 0) {
+        parsedMapping = undefined;
+      }
+    } catch (e) {
+      parsedMapping = undefined;
+    }
+
+    await generator.generate({
+      csvPath: req.file.path,
+      outputDir,
+      templateName: template,
+      columnMapping: parsedMapping
+    });
+
+    // Clean up uploaded CSV
+    await fs.remove(req.file.path);
+
+    // Count generated images
+    const files = await fs.readdir(outputDir);
+    const imageFiles = files.filter(f => f.endsWith('.png'));
+
+    res.json({
+      success: true,
+      count: imageFiles.length,
+      downloadPath: `/generated/${path.basename(outputDir)}`
+    });
+  } catch (error) {
+    console.error('Error generating images:', error);
+    res.status(500).send('Error generating images: ' + error.message);
+  }
+});
+
+app.get('/api/templates', (req, res) => {
+  const templates = getTemplateNames().map(name => ({
+    name,
+    config: getTemplate(name)
+  }));
+  res.json(templates);
+});
+
+// Serve generated files
+app.use('/generated', express.static('public/generated'));
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`FYB Generator web server running on http://localhost:${PORT}`);
+});

@@ -1,5 +1,5 @@
 import * as fs from 'fs';
-import * as csv from 'csv-parser';
+import csv from 'csv-parser';
 import { StudentData, ColumnMapping } from '../types';
 
 export class CSVParser {
@@ -16,7 +16,7 @@ export class CSVParser {
         .on('end', () => {
           resolve(results);
         })
-        .on('error', (error) => {
+        .on('error', (error: unknown) => {
           reject(error);
         });
     });
@@ -69,7 +69,7 @@ export class CSVParser {
       
       fs.createReadStream(filePath)
         .pipe(csv())
-        .on('headers', (headerList) => {
+        .on('headers', (headerList: string[]) => {
           headers = headerList;
         })
         .on('data', () => {
@@ -78,7 +78,7 @@ export class CSVParser {
         .on('end', () => {
           resolve(headers);
         })
-        .on('error', (error) => {
+        .on('error', (error: unknown) => {
           reject(error);
         });
     });

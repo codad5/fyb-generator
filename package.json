@@ -13,10 +13,13 @@
     "web": "ts-node src/web-server.ts",
     "start": "node dist/index.js"
   },
-  "keywords": [],
+  "keywords": ["fyb", "yearbook", "generator", "csv", "images"],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "canvas": "^3.1.2",
     "commander": "^14.0.0",

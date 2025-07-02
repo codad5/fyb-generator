@@ -1,6 +1,5 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import fetch from 'node-fetch';
 import sharp from 'sharp';
 
 export class ImageUtils {
@@ -33,10 +32,12 @@ export class ImageUtils {
 
   private static async fetchImageAsBase64(url: string): Promise<string | null> {
     try {
+      // Use native fetch (Node 18+)
       const response = await fetch(url);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       
-      const buffer = await response.buffer();
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
       const contentType = response.headers.get('content-type') || 'image/jpeg';
       
       return `data:${contentType};base64,${buffer.toString('base64')}`;

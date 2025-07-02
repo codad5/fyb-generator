@@ -1,6 +1,5 @@
 import { HtmlTemplateConfig } from "../../types";
 
-
 export const minimalTemplate: HtmlTemplateConfig = {
   name: 'minimal',
   type: 'html',

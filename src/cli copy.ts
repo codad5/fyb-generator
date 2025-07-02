@@ -4,15 +4,15 @@ import { Command } from 'commander';
 import * as path from 'path';
 import * as fs from 'fs-extra';
 import { FYBGenerator } from './core/generator';
-import { getTemplateNames, getTemplatesByType } from './templates';
+import { getTemplateNames } from './templates';
 import { ColumnMapping } from './types';
 
 const program = new Command();
 
 program
   .name('fyb')
-  .description('Final Year Brethren image generator with Canvas, HTML, and SVG support')
-  .version('2.0.0');
+  .description('Final Year Brethren image generator')
+  .version('1.0.0');
 
 program
   .command('generate')
@@ -20,15 +20,12 @@ program
   .requiredOption('-i, --input <path>', 'Path to CSV file')
   .requiredOption('-o, --output <path>', 'Output directory')
   .option('-t, --template <name>', 'Template name', 'default')
-  .option('-f, --format <format>', 'Output format (png, jpeg, webp, svg)', 'png')
   .option('-c, --config <path>', 'Path to column mapping config file')
   .option('--name-column <name>', 'CSV column name for student name', 'name')
-  .option('--photo-column <name>', 'CSV column name for photo path/URL/base64', 'photoPath')
+  .option('--photo-column <name>', 'CSV column name for photo path', 'photoPath')
   .option('--department-column <name>', 'CSV column name for department', 'department')
   .option('--state-column <name>', 'CSV column name for state', 'stateOfOrigin')
   .action(async (options) => {
-    const generator = new FYBGenerator();
-    
     try {
       let columnMapping: ColumnMapping | undefined;
 
@@ -51,39 +48,27 @@ program
         };
       }
 
+      const generator = new FYBGenerator();
       await generator.generate({
         csvPath: path.resolve(options.input),
         outputDir: path.resolve(options.output),
         templateName: options.template,
-        columnMapping,
-        outputFormat: options.format
+        columnMapping
       });
     } catch (error) {
       console.error('Error:', error);
       process.exit(1);
-    } finally {
-      await generator.destroy();
     }
   });
 
 program
   .command('templates')
   .description('List available templates')
-  .option('-t, --type <type>', 'Filter by template type (canvas, html, svg)')
-  .action((options) => {
-    if (options.type) {
-      const templates = getTemplatesByType(options.type);
-      console.log(`Available ${options.type} templates:`);
-      templates.forEach(template => {
-        console.log(`  - ${template.name}: ${template.description || 'No description'}`);
-      });
-    } else {
-      console.log('Available templates:');
-      getTemplateNames().forEach(name => {
-        const template = require('./templates').getTemplate(name);
-        console.log(`  - ${name} (${template.type}): ${template.description || 'No description'}`);
-      });
-    }
+  .action(() => {
+    console.log('Available templates:');
+    getTemplateNames().forEach(name => {
+      console.log(`  - ${name}`);
+    });
   });
 
 program
@@ -91,9 +76,8 @@ program
   .description('Show CSV column headers')
   .requiredOption('-i, --input <path>', 'Path to CSV file')
   .action(async (options) => {
-    const generator = new FYBGenerator();
-    
     try {
+      const generator = new FYBGenerator();
       const headers = await generator.getCSVHeaders(path.resolve(options.input));
       console.log('CSV Headers:');
       headers.forEach((header, index) => {
@@ -102,8 +86,6 @@ program
     } catch (error) {
       console.error('Error:', error);
       process.exit(1);
-    } finally {
-      await generator.destroy();
     }
   });
 
@@ -125,15 +107,12 @@ program
       worstExperience: 'Worst Experience',
       afterSchool: 'Future Plans',
       relationshipStatus: 'Relationship',
-      photoPath: 'Photo Path',
-      photoUrl: 'Photo URL',
-      photoBase64: 'Photo Base64'
+      photoPath: 'Photo Path'
     };
 
     await fs.writeJson(options.output, sampleConfig, { spaces: 2 });
     console.log(`Sample config created: ${options.output}`);
     console.log('Edit this file to match your CSV column names.');
-    console.log('Photo fields support: file paths, URLs, or base64 data.');
   });
 
-program.parse()
+program.parse();

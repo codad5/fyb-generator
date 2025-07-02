@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{name}} - FYB</title>
+    <link
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Serif:wght@400;500&display=swap"
+        rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            width: 600px;
+            height: 800px;
+            background: #fafafa;
+            font-family: 'IBM Plex Sans', sans-serif;
+            color: #2c3e50;
+            padding: 60px 50px;
+            position: relative;
+        }
+
+        .minimal-card {
+            height: 100%;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+            padding: 50px 40px;
+            position: relative;
+        }
+
+        .accent-line {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: #3498db;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding-bottom: 30px;
+            border-bottom: 1px solid #ecf0f1;
+        }
+
+        .name {
+            font-family: 'IBM Plex Serif', serif;
+            font-size: 32px;
+            font-weight: 500;
+            color: #2c3e50;
+            margin-bottom: 8px;
+        }
+
+        .department-state {
+            font-size: 16px;
+            color: #7f8c8d;
+            font-weight: 400;
+        }
+
+        .content {
+            display: grid;
+            grid-template-columns: 200px 1fr;
+            gap: 40px;
+            height: calc(100% - 120px);
+        }
+
+        .photo-section {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .photo {
+            width: 180px;
+            height: 220px;
+            border-radius: 4px;
+            object-fit: cover;
+            border: 1px solid #ecf0f1;
+            margin-bottom: 20px;
+        }
+
+        .photo-placeholder {
+            width: 180px;
+            height: 220px;
+            border-radius: 4px;
+            background: #ecf0f1;
+            border: 1px solid #bdc3c7;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #95a5a6;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
+
+        .level-hobbies {
+            text-align: center;
+            font-size: 12px;
+            color: #7f8c8d;
+        }
+
+        .details {
+            display: flex;
+            flex-direction: column;
+            gap: 25px;
+        }
+
+        .detail-group {
+            border-left: 3px solid #ecf0f1;
+            padding-left: 20px;
+        }
+
+        .detail-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #95a5a6;
+            margin-bottom: 6px;
+        }
+
+        .detail-value {
+            font-size: 14px;
+            line-height: 1.5;
+            color: #2c3e50;
+        }
+
+        .important {
+            border-left-color: #3498db;
+        }
+
+        .important .detail-value {
+            font-weight: 500;
+        }
+
+        .signature {
+            position: absolute;
+            bottom: 20px;
+            right: 30px;
+            font-size: 10px;
+            color: #bdc3c7;
+            font-style: italic;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="minimal-card">
+        <div class="accent-line"></div>
+
+        <div class="header">
+            <div class="name">{{name}}</div>
+            <div class="department-state">{{department}} • {{stateOfOrigin}}</div>
+        </div>
+
+        <div class="content">
+            <div class="photo-section">
+                {{#if photoUrl}}
+                <img src="{{photoUrl}}" alt="{{name}}" class="photo">
+                {{else if photoBase64}}
+                <img src="data:image/jpeg;base64,{{photoBase64}}" alt="{{name}}" class="photo">
+                {{else}}
+                <div class="photo-placeholder">No Photo</div>
+                {{/if}}
+
+                <div class="level-hobbies">
+                    <div><strong>{{bestLevel}}</strong></div>
+                    <div>{{hobbies}}</div>
+                </div>
+            </div>
+
+            <div class="details">
+                <div class="detail-group important">
+                    <div class="detail-label">Best Memory</div>
+                    <div class="detail-value">{{bestMoment}}</div>
+                </div>
+
+                <div class="detail-group">
+                    <div class="detail-label">Favorite Course</div>
+                    <div class="detail-value">{{favoriteCourse}}</div>
+                </div>
+
+                <div class="detail-group">
+                    <div class="detail-label">Most Challenging</div>
+                    <div class="detail-value">{{mostChallengingCourse}}</div>
+                </div>
+
+                <div class="detail-group important">
+                    <div class="detail-label">Future Plans</div>
+                    <div class="detail-value">{{afterSchool}}</div>
+                </div>
+
+                <div class="detail-group">
+                    <div class="detail-label">Relationship Status</div>
+                    <div class="detail-value">{{relationshipStatus}}</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="signature">Class of 2024</div>
+    </div>
+</body>
+
+</html>

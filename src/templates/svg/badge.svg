@@ -1,0 +1,56 @@
+<svg width="400" height="500" viewBox="0 0 400 500" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#667eea"/>
+            <stop offset="100%" style="stop-color:#764ba2"/>
+        </linearGradient>
+        <linearGradient id="cardGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#ffffff;stop-opacity:0.95"/>
+            <stop offset="100%" style="stop-color:#f8f9fa;stop-opacity:0.95"/>
+        </linearGradient>
+        <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+            <dropShadow dx="0" dy="4" stdDeviation="8" flood-opacity="0.3"/>
+        </filter>
+    </defs>
+    
+    <!-- Background -->
+    <rect width="400" height="500" fill="url(#bgGradient)"/>
+    
+    <!-- Main Card -->
+    <rect x="30" y="40" width="340" height="420" rx="20" fill="url(#cardGradient)" filter="url(#shadow)"/>
+    
+    <!-- Header Accent -->
+    <rect x="30" y="40" width="340" height="8" rx="20" fill="#3498db"/>
+    
+    <!-- Photo Placeholder/Area -->
+    <circle cx="200" cy="140" r="50" fill="#ecf0f1" stroke="#bdc3c7" stroke-width="2"/>
+    <image id="student-photo" x="150" y="90" width="100" height="100" clip-path="circle(50px at 50px 50px)" href=""/>
+    
+    <!-- Name -->
+    <text id="student-name" x="200" y="220" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#2c3e50">Student Name</text>
+    
+    <!-- Department -->
+    <text id="student-department" x="200" y="245" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#7f8c8d">Department</text>
+    
+    <!-- State -->
+    <text id="student-state" x="200" y="265" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#95a5a6">State</text>
+    
+    <!-- Divider Line -->
+    <line x1="60" y1="285" x2="340" y2="285" stroke="#ecf0f1" stroke-width="1"/>
+    
+    <!-- Best Course -->
+    <text x="60" y="310" font-family="Arial, sans-serif" font-size="10" fill="#95a5a6" text-transform="uppercase">FAVORITE COURSE</text>
+    <text id="best-course" x="60" y="325" font-family="Arial, sans-serif" font-size="12" fill="#2c3e50">Course Name</text>
+    
+    <!-- Hobbies -->
+    <text x="60" y="355" font-family="Arial, sans-serif" font-size="10" fill="#95a5a6" text-transform="uppercase">HOBBIES</text>
+    <text id="hobbies-text" x="60" y="370" font-family="Arial, sans-serif" font-size="12" fill="#2c3e50">Hobbies</text>
+    
+    <!-- Decorative Elements -->
+    <circle cx="80" cy="420" r="15" fill="#3498db" opacity="0.3"/>
+    <circle cx="320" cy="420" r="10" fill="#e74c3c" opacity="0.3"/>
+    <circle cx="350" cy="400" r="8" fill="#f39c12" opacity="0.3"/>
+    
+    <!-- Footer -->
+    <text x="200" y="445" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#95a5a6" opacity="0.7">FINAL YEAR BRETHREN</text>
+</svg>

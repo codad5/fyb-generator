@@ -1,10 +1,12 @@
-import { TemplateConfig } from '../types';
+import { CanvasTemplateConfig } from '../types';
 
-export const modernTemplate: TemplateConfig = {
+export const modernTemplate: CanvasTemplateConfig = {
   name: 'modern',
+  type: 'canvas',
   width: 600,
   height: 800,
   backgroundColor: '#1a1a1a',
+  description: 'Dark themed canvas template with modern design',
   photoConfig: {
     x: 50,
     y: 80,
@@ -129,3 +131,4 @@ export const modernTemplate: TemplateConfig = {
     }
   ]
 };
+

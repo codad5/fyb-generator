@@ -1,10 +1,12 @@
-import { TemplateConfig } from '../types';
+import { CanvasTemplateConfig } from '../types';
 
-export const defaultTemplate: TemplateConfig = {
+export const defaultTemplate: CanvasTemplateConfig = {
   name: 'default',
+  type: 'canvas',
   width: 800,
   height: 1000,
   backgroundColor: '#f5f5f5',
+  description: 'Classic canvas-based template with comprehensive fields',
   photoConfig: {
     x: 50,
     y: 100,

@@ -21,7 +21,7 @@ node_modules
 .next
 out
 *.log
-.env*
+.env
 
 
 # reports
@@ -33,3 +33,7 @@ coverage/
 storage/
 
 dist/
+
+
+output/
+public/generated/

@@ -93,7 +93,7 @@ app.get('/api/templates', (req, res) => {
 // Serve generated files
 app.use('/generated', express.static('public/generated'));
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.WEB_PORT || 3000;
 app.listen(PORT, () => {
   console.log(`FYB Generator web server running on http://localhost:${PORT}`);
 });

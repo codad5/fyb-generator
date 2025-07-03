@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>{{name}} – FYB Mechanical Engineering UNN 2025</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link rel="preconnect" href="https://fonts.gstatic.com/" crossorigin />
+    <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" />
+    <style>
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+        }
+    </style>
+</head>
+
+<body class="bg-white w-[800px] h-[1000px] overflow-hidden text-[#121516]">
+    <div class="flex h-full">
+        <!-- Left: Image -->
+        <div class="flex flex-col justify-center items-center w-[35%] bg-cover bg-center"
+            style="background-image: url('{{backgroundImageUrl}}');">
+            <div class="w-32 h-32 rounded-full bg-cover bg-center border-4 border-white shadow-lg"
+                style="background-image: url('{{photoUrl}}');">
+            </div>
+            <div class="mt-4 text-center">
+                <p class="text-xl font-bold">{{name}}</p>
+                {{#if nickname}}<p class="text-sm text-gray-500">Nickname: {{nickname}}</p>{{/if}}
+                {{#if department}}<p class="text-sm text-gray-500">{{department}}</p>{{/if}}
+            </div>
+        </div>
+
+        <!-- Right: Info -->
+        <div class="flex-1 px-6 py-4 overflow-y-auto">
+            <!-- Personal Info -->
+            <div>
+                <h3 class="text-lg font-bold mb-2">Personal Information</h3>
+                <div class="flex justify-between text-sm py-1 border-t border-gray-200">
+                    <span class="text-gray-500">State of Origin</span>
+                    <span>{{stateOfOrigin}}</span>
+                </div>
+            </div>
+
+            <!-- Academic Highlights -->
+            <div class="mt-4">
+                <h3 class="text-lg font-bold mb-2">Academic Highlights</h3>
+                <div class="flex justify-between text-sm py-1 border-t border-gray-200">
+                    <span class="text-gray-500">Most Challenging Course</span>
+                    <span>{{mostChallengingCourse}}</span>
+                </div>
+                <div class="flex justify-between text-sm py-1 border-t border-gray-200">
+                    <span class="text-gray-500">Favorite Course</span>
+                    <span>{{favoriteCourse}}</span>
+                </div>
+                <div class="flex justify-between text-sm py-1 border-t border-gray-200">
+                    <span class="text-gray-500">Best Level</span>
+                    <span>{{bestLevel}}</span>
+                </div>
+            </div>
+
+            <!-- Experiences & Aspirations -->
+            <div class="mt-4">
+                <h3 class="text-lg font-bold mb-2">Experiences & Aspirations</h3>
+                <div class="flex justify-between text-sm py-1 border-t border-gray-200">
+                    <span class="text-gray-500">Hobbies</span>
+                    <span>{{hobbies}}</span>
+                </div>
+                <div class="flex justify-between text-sm py-1 border-t border-gray-200">
+                    <span class="text-gray-500">Best Moment</span>
+                    <span>{{bestMoment}}</span>
+                </div>
+                <div class="flex justify-between text-sm py-1 border-t border-gray-200">
+                    <span class="text-gray-500">Future Plans</span>
+                    <span>{{afterSchool}}</span>
+                </div>
+                <div class="flex justify-between text-sm py-1 border-t border-gray-200">
+                    <span class="text-gray-500">Relationship Status</span>
+                    <span>{{relationshipStatus}}</span>
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="mt-4 pt-2 border-t border-gray-200 text-center text-xs text-gray-400">
+                NUESA • THERMAC • MECHANICAL ENGINEERING • UNN 2025
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

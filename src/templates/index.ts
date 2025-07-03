@@ -4,13 +4,15 @@ import { modernTemplate } from './modern';
 import { glamourTemplate } from './html/glamour';
 import { minimalTemplate } from './html/minimal';
 import { badgeTemplate } from './svg/badge';
+import { fybMechEngTemplate } from './html/fyb-mech-eng-unn';
 
 export const templates: { [key: string]: TemplateConfig } = {
   default: defaultTemplate,
   modern: modernTemplate,
   glamour: glamourTemplate,
   minimal: minimalTemplate,
-  badge: badgeTemplate
+  badge: badgeTemplate,
+  fybMechEngTemplate
 };
 
 export const getTemplate = (name: string): TemplateConfig => {

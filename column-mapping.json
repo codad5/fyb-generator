@@ -1,0 +1,17 @@
+{
+  "name": "Full Name",
+  "nickname": "Nickname",
+  "department": "Department",
+  "stateOfOrigin": "State",
+  "mostChallengingCourse": "Hardest Course",
+  "favoriteCourse": "Best Course",
+  "bestLevel": "Favorite Level",
+  "hobbies": "Hobbies",
+  "bestMoment": "Best Memory",
+  "worstExperience": "Worst Experience",
+  "afterSchool": "Future Plans",
+  "relationshipStatus": "Relationship",
+  "photoPath": "Photo Path",
+  "photoUrl": "Photo URL",
+  "photoBase64": "Photo Base64"
+}
